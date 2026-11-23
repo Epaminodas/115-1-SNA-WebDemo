@@ -13,6 +13,8 @@
   const DEFAULT_COLOR = '#4d91c5', OTHER_COLOR = '#b8c2cc', MISSING_COLOR = '#e3e7ec';
   const GRADIENT = [[219, 233, 246], [8, 81, 156]];   // 數值上色：淺 → 深
   const OTHER = '其他', MISSING = '（無資料）';
+  const MIN_SIZE = 14, MAX_SIZE = 48;   // 節點半徑範圍；排開節點時一律以 MAX_SIZE 計算
+  const NODE_GAP = 6;                   // 兩個節點邊緣之間至少留的空隙
 
   const fmt = v => (v === null || v === undefined) ? '—'
     : (typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(3)) : String(v));
@@ -38,7 +40,32 @@
   function sizeFunction(column) {
     if (!column) return () => 20;
     const r = range(column);
-    return node => { const t = scale(node.values[column], r); return t === null ? 8 : 14 + t * 34; };
+    return node => { const t = scale(node.values[column], r); return t === null ? 8 : MIN_SIZE + t * (MAX_SIZE - MIN_SIZE); };
+  }
+
+  // ── 節點不重疊：開頁時把太近的節點推開一次，之後位置固定 ──
+  // 以最大半徑計算間距，所以不論切換到哪個欄位，節點都不會重疊。
+  function spreadNodes(list) {
+    const minDistance = MAX_SIZE * 2 + NODE_GAP;
+    const points = list.map(n => ({ x: n.x, y: n.y }));
+    for (let round = 0; round < 500; round++) {
+      let moved = false;
+      for (let i = 0; i < points.length; i++) {
+        for (let j = i + 1; j < points.length; j++) {
+          let dx = points[j].x - points[i].x, dy = points[j].y - points[i].y;
+          let distance = Math.hypot(dx, dy);
+          if (distance >= minDistance) continue;
+          if (distance < 0.01) { dx = Math.cos(i + j); dy = Math.sin(i + j); distance = 1; }   // 完全重疊時隨便選個方向
+          const push = (minDistance - distance) / 2 + 0.5;
+          const ux = dx / distance, uy = dy / distance;
+          points[i].x -= ux * push; points[i].y -= uy * push;
+          points[j].x += ux * push; points[j].y += uy * push;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    return points;
   }
 
   function categoryColors(column) {
@@ -96,7 +123,8 @@
       ...Object.entries(node.values).map(([k, v]) => el('div', null, k + '：' + fmt(v))));
   }
 
-  const nodes = new vis.DataSet(data.nodes.map(n => ({ id: n.id, label: n.label, x: n.x, y: n.y })));
+  const positions = spreadNodes(data.nodes);
+  const nodes = new vis.DataSet(data.nodes.map((n, i) => ({ id: n.id, label: n.label, x: positions[i].x, y: positions[i].y })));
   const edges = new vis.DataSet(data.edges);
   const network = new vis.Network(document.getElementById('network'), { nodes, edges }, {
     autoResize: true,
